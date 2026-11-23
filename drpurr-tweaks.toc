@@ -5,8 +5,15 @@
 ## SavedVariables: DrpurrTweaksDB
 
 Libs/embeds.xml
+Widgets/SliderWithInput.xml
 
 Core.lua
 Tweaks/MouseButtonLabels.lua
+Tweaks/MacroNames.lua
+Tweaks/SwingTimer.lua
 Tweaks/Tooltip.lua
+Tweaks/BarTextures.lua
+Tweaks/BNetSound.lua
+Tweaks/SpellIDs.lua
+Tweaks/UnitTooltip.lua
 Options.lua

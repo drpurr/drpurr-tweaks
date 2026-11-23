@@ -16,8 +16,7 @@ end
 -------------------------------------------------------------------------------
 local anchor = {
 	key = "tooltipAnchor",
-	name = "Anchor tooltip to mouse",
-	tooltip = "Tooltips that would appear in Blizzard's default spot follow the cursor instead.",
+	name = "Anchor to mouse",
 	defaults = {
 		enabled = true,
 		corner = "BOTTOMLEFT",
@@ -27,13 +26,27 @@ local anchor = {
 }
 
 -- Corner = which side of the cursor the tooltip opens on.
--- Value = the tooltip point that sits on the cursor.
+-- point: the tooltip point that is placed on the cursor.
+-- dx/dy: which corner of the cursor image it goes to, as multiples of the
+-- cursor size measured from the tip (the image's top-left corner).
 local CORNER_POINT = {
-	BOTTOMLEFT = "TOPRIGHT",
-	BOTTOMRIGHT = "TOPLEFT",
-	TOPLEFT = "BOTTOMRIGHT",
-	TOPRIGHT = "BOTTOMLEFT",
+	BOTTOMLEFT  = { point = "TOPRIGHT",    dx = 0, dy = -1 },
+	BOTTOMRIGHT = { point = "TOPLEFT",     dx = 1, dy = -1 },
+	TOPLEFT     = { point = "BOTTOMRIGHT", dx = 0, dy = 0 },
+	TOPRIGHT    = { point = "BOTTOMLEFT",  dx = 1, dy = 0 },
 }
+
+-- Blizzard's Cursor Size option (cursorSizePreferred): -1 = default, 0..4 = 32..128 px.
+-- "Default" is treated as 32 px.
+local CURSOR_PIXELS = { [-1] = 32, [0] = 32, [1] = 48, [2] = 64, [3] = 96, [4] = 128 }
+
+-- Cursor image size in the same units GetCursorPosition() returns.
+local function CursorSizeUnits()
+	local pixels = CURSOR_PIXELS[tonumber(C_CVar.GetCVar("cursorSizePreferred")) or -1] or 32
+	local _, physicalHeight = GetPhysicalScreenSize()
+	if not physicalHeight or physicalHeight <= 0 then return pixels end
+	return pixels * 768 / physicalHeight
+end
 ns.TOOLTIP_CORNERS = {
 	{ "BOTTOMLEFT", "Bottom Left" },
 	{ "BOTTOMRIGHT", "Bottom Right" },
@@ -46,10 +59,14 @@ local hookedOwner = {}   -- tooltips whose SetOwner/OnUpdate/OnHide we've hooked
 
 local function PositionAtCursor(tooltip)
 	local db = anchor.db
+	local corner = CORNER_POINT[db.corner] or CORNER_POINT.BOTTOMLEFT
 	local x, y = GetCursorPosition()
+	local size = CursorSizeUnits()
+	x = x + corner.dx * size
+	y = y + corner.dy * size
 	local scale = tooltip:GetEffectiveScale()
 	tooltip:ClearAllPoints()
-	tooltip:SetPoint(CORNER_POINT[db.corner] or "TOPRIGHT", UIParent, "BOTTOMLEFT",
+	tooltip:SetPoint(corner.point, UIParent, "BOTTOMLEFT",
 		x / scale + db.offsetX, y / scale + db.offsetY)
 end
 
@@ -95,8 +112,7 @@ end
 -------------------------------------------------------------------------------
 local skin = {
 	key = "tooltipSkin",
-	name = "Skin tooltips",
-	tooltip = "Replace the tooltip background, border and font with LibSharedMedia choices.",
+	name = "Skin",
 	defaults = {
 		enabled = true,
 		background = "Solid",
@@ -158,7 +174,8 @@ local function BuildBackdrop()
 	local edgeSize = db.borderSize
 	local inset = edgeFile and math.floor(edgeSize / 4) or 0
 	return {
-		bgFile = LSM:Fetch("background", db.background, true),
+		-- Backgrounds can also be statusbar textures; the background version wins on a name clash.
+		bgFile = LSM:Fetch("background", db.background, true) or LSM:Fetch("statusbar", db.background, true),
 		edgeFile = edgeFile,
 		edgeSize = edgeSize,
 		tile = true,
@@ -256,8 +273,7 @@ end
 -------------------------------------------------------------------------------
 local smart = {
 	key = "tooltipSmartBorder",
-	name = "Smart border color",
-	tooltip = "Colour the tooltip border by item quality, NPC reaction or player class. Overrides Border color when it applies.",
+	name = "Smart border",
 	defaults = { enabled = true },
 }
 
@@ -334,6 +350,190 @@ function smart:OnDisable()
 	end
 end
 
+-------------------------------------------------------------------------------
+-- Fade out time (world-object tooltips that fade when you mouse off them)
+-------------------------------------------------------------------------------
+local fade = {
+	key = "tooltipFade",
+	name = "Fade out",
+	defaults = {
+		enabled = true,
+		fadeTime = 0,
+	},
+}
+
+-- Blizzard's fade runs in the client and can't be changed, so we run our own
+-- (shorter) fade alongside it, or hide immediately when fadeTime is 0.
+--
+-- While Blizzard's fade is running the client owns the tooltip frame's alpha and
+-- overwrites any SetAlpha on it every frame, so instead we fade the tooltip's
+-- contents (its text/texture regions and child frames). Their alpha multiplies
+-- with the frame's, and the client doesn't touch it.
+local fading = {}  -- tooltip -> { start = time, parts = { [object] = originalAlpha } }
+
+-- Unit tooltips (e.g. from mouseover) can mark lines as secret; their GetAlpha()
+-- then returns a secret number we may not do maths on. Don't read it for those:
+-- assume full opacity (tooltip parts are normally at 1) so they still fade.
+local function SafeAlpha(object)
+	if object.HasAnySecretAspect and object:HasAnySecretAspect() then
+		return 1
+	end
+	local alpha = object:GetAlpha()
+	if issecretvalue(alpha) then return 1 end
+	return alpha
+end
+
+local function CollectParts(tooltip)
+	local parts = {}
+	for _, region in ipairs({ tooltip:GetRegions() }) do
+		parts[region] = SafeAlpha(region)
+	end
+	for _, child in ipairs({ tooltip:GetChildren() }) do
+		parts[child] = SafeAlpha(child)
+	end
+	return parts
+end
+
+local function SetPartsAlpha(state, factor)
+	for object, original in pairs(state.parts) do
+		object:SetAlpha(original * factor)
+	end
+end
+
+local function StopFade(tooltip)
+	local state = fading[tooltip]
+	if state then
+		fading[tooltip] = nil
+		SetPartsAlpha(state, 1)
+	end
+end
+
+local function OnFadeUpdate(tooltip)
+	local state = fading[tooltip]
+	if not state then return end
+	local progress = (GetTime() - state.start) / fade.db.fadeTime
+	if progress >= 1 then
+		StopFade(tooltip)
+		tooltip:Hide()
+	else
+		SetPartsAlpha(state, 1 - progress)
+	end
+end
+
+local function OnFadeOut(tooltip)
+	if not fade.db.enabled or tooltip:IsForbidden() then return end
+	if fade.db.fadeTime <= 0 then
+		tooltip:Hide()
+	else
+		StopFade(tooltip)
+		fading[tooltip] = { start = GetTime(), parts = CollectParts(tooltip) }
+	end
+end
+
+function fade:OnInit()
+	hooksecurefunc(GameTooltip, "FadeOut", OnFadeOut)
+	GameTooltip:HookScript("OnUpdate", OnFadeUpdate)
+	GameTooltip:HookScript("OnShow", StopFade)
+	GameTooltip:HookScript("OnHide", StopFade)
+	-- Re-hovering while the tooltip is still fading doesn't fire OnShow (it never
+	-- hid), but Blizzard re-owns and re-shows it, so cancel the fade there too.
+	hooksecurefunc(GameTooltip, "SetOwner", StopFade)
+	hooksecurefunc(GameTooltip, "Show", StopFade)
+end
+
+function fade:OnEnable() end
+
+function fade:OnDisable()
+	for tooltip in pairs(fading) do StopFade(tooltip) end
+end
+
+-------------------------------------------------------------------------------
+-- Health bar inside the tooltip border
+-------------------------------------------------------------------------------
+local healthBar = {
+	key = "tooltipHealthBar",
+	name = "Inner health bar",
+	defaults = {
+		enabled = true,
+		height = 6,
+	},
+}
+
+local BLIZZARD_BORDER_INSET = 4
+local BAR_GAP = 2  -- space between the border and the bar, and between text and bar
+
+-- How far the visible border reaches into the tooltip.
+local function BorderInset(tooltip)
+	local bd = backdrops[tooltip]
+	if skin.db.enabled and bd and bd:IsShown() then
+		local edgeFile = LSM:Fetch("border", skin.db.border, true)
+		if not edgeFile or edgeFile == "" or edgeFile:lower() == "interface\\none" then return 0 end
+		return math.floor(skin.db.borderSize / 4)
+	end
+	return BLIZZARD_BORDER_INSET
+end
+
+local function SetBottomPadding(tooltip, bottom)
+	local right = tooltip:GetPadding()
+	tooltip:SetPadding(right or 0, bottom, 0, 0)
+end
+
+local function LayoutBar(tooltip)
+	local bar = tooltip.StatusBar
+	if not bar or tooltip:IsForbidden() then return end
+	if not healthBar.db.enabled then return end
+	local inset = BorderInset(tooltip) + BAR_GAP
+	bar:ClearAllPoints()
+	bar:SetPoint("BOTTOMLEFT", tooltip, "BOTTOMLEFT", inset, inset)
+	bar:SetPoint("BOTTOMRIGHT", tooltip, "BOTTOMRIGHT", -inset, inset)
+	bar:SetHeight(healthBar.db.height)
+	if bar:IsShown() then
+		SetBottomPadding(tooltip, healthBar.db.height + BAR_GAP)
+		tooltip.drpurrBarPadding = true
+	elseif tooltip.drpurrBarPadding then
+		SetBottomPadding(tooltip, 0)
+		tooltip.drpurrBarPadding = nil
+	end
+end
+
+local function RestoreBar(tooltip)
+	local bar = tooltip.StatusBar
+	if not bar then return end
+	-- Blizzard's original anchors from GameTooltip.xml.
+	bar:ClearAllPoints()
+	bar:SetPoint("TOPLEFT", tooltip, "BOTTOMLEFT", 2, -1)
+	bar:SetPoint("TOPRIGHT", tooltip, "BOTTOMRIGHT", -2, -1)
+	bar:SetHeight(8)
+	if tooltip.drpurrBarPadding then
+		SetBottomPadding(tooltip, 0)
+		tooltip.drpurrBarPadding = nil
+	end
+end
+
+function healthBar:OnInit()
+	local tooltip = GameTooltip
+	local bar = tooltip.StatusBar
+	if not bar then return end
+	-- Blizzard clears padding in GameTooltip's OnShow; our hook runs after it.
+	tooltip:HookScript("OnShow", LayoutBar)
+	bar:HookScript("OnShow", function() LayoutBar(tooltip) end)
+	bar:HookScript("OnHide", function() LayoutBar(tooltip) end)
+end
+
+function healthBar:OnEnable()
+	LayoutBar(GameTooltip)
+end
+
+function healthBar:OnDisable()
+	RestoreBar(GameTooltip)
+end
+
+function healthBar:OnSettingChanged()
+	LayoutBar(GameTooltip)
+end
+
 ns:RegisterTweak(anchor)
 ns:RegisterTweak(skin)
 ns:RegisterTweak(smart)
+ns:RegisterTweak(healthBar)
+ns:RegisterTweak(fade)

@@ -3,8 +3,7 @@ local _, ns = ...
 
 local tweak = {
 	key = "mouseButtonLabels",
-	name = "Mouse button labels (M4/M5)",
-	tooltip = "Shorten Mouse Button 4 and 5 keybind text on Blizzard action bars to M4 and M5.",
+	name = "M4/M5 labels",
 	defaults = { enabled = true },
 }
 
@@ -21,7 +20,11 @@ local function escape(s)
 end
 for key, short in pairs(REPLACEMENTS) do
 	local seen = {}
-	for _, text in ipairs({ _G["KEY_ABBR_" .. key], _G["KEY_" .. key], key }) do
+	-- Not ipairs: KEY_ABBR_* may not exist (it doesn't in Forever), and ipairs
+	-- stops at the first nil, which skipped every candidate.
+	local candidates = { _G["KEY_ABBR_" .. key], _G["KEY_" .. key], key }
+	for i = 1, 3 do
+		local text = candidates[i]
 		if type(text) == "string" and text ~= "" and not seen[text] then
 			seen[text] = true
 			patterns[#patterns + 1] = { escape(text), short }
@@ -37,20 +40,6 @@ local function Abbreviate(text)
 	return text
 end
 
-local BAR_PREFIXES = {
-	{ "ActionButton", 12 },
-	{ "MultiBarBottomLeftButton", 12 },
-	{ "MultiBarBottomRightButton", 12 },
-	{ "MultiBarRightButton", 12 },
-	{ "MultiBarLeftButton", 12 },
-	{ "MultiBar5Button", 12 },
-	{ "MultiBar6Button", 12 },
-	{ "MultiBar7Button", 12 },
-	{ "PetActionButton", 10 },
-	{ "StanceButton", 10 },
-	{ "PossessButton", 2 },
-	{ "OverrideActionBarButton", 6 },
-}
 
 local hotkeys = {}   -- hooked hotkey fontstrings
 local original = {}  -- fontstring -> Blizzard's unmodified text, for restoring on disable
@@ -69,15 +58,12 @@ local function OnSetText(fontString, text)
 end
 
 local function HookAll()
-	for _, bar in ipairs(BAR_PREFIXES) do
-		for i = 1, bar[2] do
-			local button = _G[bar[1] .. i]
-			local hotkey = button and button.HotKey
-			if hotkey and not hotkeys[hotkey] then
-				hotkeys[hotkey] = true
-				hooksecurefunc(hotkey, "SetText", OnSetText)
-				OnSetText(hotkey, hotkey:GetText())
-			end
+	for button in ns:EnumerateActionButtons() do
+		local hotkey = button.HotKey
+		if hotkey and not hotkeys[hotkey] then
+			hotkeys[hotkey] = true
+			hooksecurefunc(hotkey, "SetText", OnSetText)
+			OnSetText(hotkey, hotkey:GetText())
 		end
 	end
 end
