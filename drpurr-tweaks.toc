@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: drpurr-tweaks
+## Notes: A collection of small UI tweaks, each with its own toggle.
+## Version: 1.0.0
+## SavedVariables: DrpurrTweaksDB
+
+Libs/embeds.xml
+
+Core.lua
+Tweaks/MouseButtonLabels.lua
+Tweaks/Tooltip.lua
+Options.lua
