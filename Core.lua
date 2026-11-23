@@ -16,6 +16,34 @@ function ns:RegisterTweak(tweak)
 	self.tweakOrder[#self.tweakOrder + 1] = tweak.key
 end
 
+-- Blizzard action bar buttons shared by the action-bar tweaks.
+local ACTION_BUTTON_PREFIXES = {
+	{ "ActionButton", 12 },
+	{ "MultiBarBottomLeftButton", 12 },
+	{ "MultiBarBottomRightButton", 12 },
+	{ "MultiBarRightButton", 12 },
+	{ "MultiBarLeftButton", 12 },
+	{ "MultiBar5Button", 12 },
+	{ "MultiBar6Button", 12 },
+	{ "MultiBar7Button", 12 },
+	{ "PetActionButton", 10 },
+	{ "StanceButton", 10 },
+	{ "PossessButton", 2 },
+	{ "OverrideActionBarButton", 6 },
+}
+
+-- Iterator over every existing Blizzard action bar button.
+function ns:EnumerateActionButtons()
+	return coroutine.wrap(function()
+		for _, bar in ipairs(ACTION_BUTTON_PREFIXES) do
+			for i = 1, bar[2] do
+				local button = _G[bar[1] .. i]
+				if button then coroutine.yield(button) end
+			end
+		end
+	end)
+end
+
 local function ApplyDefaults(db, defaults)
 	for k, v in pairs(defaults) do
 		if db[k] == nil then
