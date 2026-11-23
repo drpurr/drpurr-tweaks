@@ -1,5 +1,12 @@
 # drpurr-tweaks
 
+![WoW Forever](https://img.shields.io/badge/WoW-Forever-8a2be2?style=for-the-badge&logo=battledotnet&logoColor=white)
+![Interface](https://img.shields.io/badge/interface-16001-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-1.0.0-brightgreen?style=for-the-badge)
+![Lua](https://img.shields.io/badge/Lua-5.1-2c2d72?style=for-the-badge&logo=lua&logoColor=white)
+![LibSharedMedia](https://img.shields.io/badge/LibSharedMedia-3.0-orange?style=for-the-badge)
+![Last commit](https://img.shields.io/github/last-commit/drpurr/drpurr-tweaks?style=for-the-badge)
+
 A collection of small UI tweaks for **WoW Forever** (interface 16001). Each tweak has its own on/off toggle.
 
 Settings: **Esc → Options → AddOns → drpurr-tweaks** (saved account-wide).
